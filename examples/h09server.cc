@@ -1846,11 +1846,12 @@ int Server::send_version_negotiation(uint32_t version, const uint8_t *dcid,
   std::array<uint32_t, 16> sv;
 
   static_assert(sv.size() >=
-                1 + (NGTCP2_PROTO_VER_MAX - NGTCP2_PROTO_VER_MIN + 1));
+                2 + (NGTCP2_PROTO_VER_MAX - NGTCP2_PROTO_VER_MIN + 1));
 
   sv[0] = generate_reserved_version(sa, salen, version);
+  sv[1] = NGTCP2_PROTO_VER_V1;
 
-  size_t svlen = 1;
+  size_t svlen = 2;
   for (auto v = NGTCP2_PROTO_VER_MIN; v <= NGTCP2_PROTO_VER_MAX; ++v) {
     sv[svlen++] = v;
   }

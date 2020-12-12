@@ -4345,9 +4345,9 @@ static int conn_on_retry(ngtcp2_conn *conn, const ngtcp2_pkt_hd *hd,
 
   retry.odcid = conn->dcid.current.cid;
 
-  rv = ngtcp2_pkt_verify_retry_tag(&retry, pkt, pktlen, conn->callbacks.encrypt,
-                                   &conn->crypto.retry_aead,
-                                   &conn->crypto.retry_aead_ctx);
+  rv = ngtcp2_pkt_verify_retry_tag(
+      conn->version, &retry, pkt, pktlen, conn->callbacks.encrypt,
+      &conn->crypto.retry_aead, &conn->crypto.retry_aead_ctx);
   if (rv != 0) {
     ngtcp2_log_info(&conn->log, NGTCP2_LOG_EVENT_PKT,
                     "unable to verify Retry packet integrity");
@@ -8962,7 +8962,9 @@ int ngtcp2_accept(ngtcp2_pkt_hd *dest, const uint8_t *pkt, size_t pktlen) {
     return -1;
   }
 
-  if (p->version < NGTCP2_PROTO_VER_MIN || NGTCP2_PROTO_VER_MAX < p->version) {
+  if (p->version != NGTCP2_PROTO_VER_V1 &&
+      (p->version < NGTCP2_PROTO_VER_MIN ||
+       NGTCP2_PROTO_VER_MAX < p->version)) {
     return 1;
   }
 
