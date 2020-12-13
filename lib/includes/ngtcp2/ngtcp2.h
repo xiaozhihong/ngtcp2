@@ -215,19 +215,41 @@ typedef struct ngtcp2_mem {
 /**
  * @macro
  *
- * :macro:`NGTCP2_PROTO_VER_MAX` is the highest QUIC version the
- * library supports.
+ * :macro:`NGTCP2_PROTO_VER_V1` is the QUIC version 1.
  */
-#define NGTCP2_PROTO_VER_MAX 0xff000020u
+#define NGTCP2_PROTO_VER_V1 0x00000001u
+
 /**
  * @macro
  *
- * :macro:`NGTCP2_PROTO_VER_MIN` is the lowest QUIC version the
+ * :macro:`NGTCP2_PROTO_VER_DRAFT_MAX` is the maximum QUIC draft
+ * version that this library supports.
+ */
+#define NGTCP2_PROTO_VER_DRAFT_MAX 0xff000020u
+
+/**
+ * @macro
+ *
+ * :macro:`NGTCP2_PROTO_VER_DRAFT_MIN` is the minimum QUIC draft
+ * version that this library supports.
+ */
+#define NGTCP2_PROTO_VER_DRAFT_MIN 0xff00001du
+
+/**
+ * @macro
+ *
+ * :macro:`NGTCP2_PROTO_VER_MAX` is the highest QUIC version that this
  * library supports.
  */
-#define NGTCP2_PROTO_VER_MIN 0xff00001du
+#define NGTCP2_PROTO_VER_MAX NGTCP2_PROTO_VER_V1
 
-#define NGTCP2_PROTO_VER_V1 0x00000001u
+/**
+ * @macro
+ *
+ * :macro:`NGTCP2_PROTO_VER_MIN` is the lowest QUIC version that this
+ * library supports.
+ */
+#define NGTCP2_PROTO_VER_MIN NGTCP2_PROTO_VER_DRAFT_MIN
 
 /**
  * @macrosection

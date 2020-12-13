@@ -95,8 +95,8 @@ int ngtcp2_pkt_decode_version_cid(uint32_t *pversion, const uint8_t **pdcid,
     version = ngtcp2_get_uint32(&data[1]);
 
     if ((version == 0 || version == NGTCP2_PROTO_VER_V1 ||
-         (NGTCP2_PROTO_VER_MIN <= version &&
-          version <= NGTCP2_PROTO_VER_MAX)) &&
+         (NGTCP2_PROTO_VER_DRAFT_MIN <= version &&
+          version <= NGTCP2_PROTO_VER_DRAFT_MAX)) &&
         (dcidlen > NGTCP2_MAX_CIDLEN || scidlen > NGTCP2_MAX_CIDLEN)) {
       return NGTCP2_ERR_INVALID_ARGUMENT;
     }
@@ -108,7 +108,8 @@ int ngtcp2_pkt_decode_version_cid(uint32_t *pversion, const uint8_t **pdcid,
     *pscidlen = scidlen;
 
     if (version && version != NGTCP2_PROTO_VER_V1 &&
-        (version < NGTCP2_PROTO_VER_MIN || NGTCP2_PROTO_VER_MAX < version)) {
+        (version < NGTCP2_PROTO_VER_DRAFT_MIN ||
+         NGTCP2_PROTO_VER_DRAFT_MAX < version)) {
       return 1;
     }
     return 0;

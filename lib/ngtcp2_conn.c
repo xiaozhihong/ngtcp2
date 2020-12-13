@@ -8963,8 +8963,8 @@ int ngtcp2_accept(ngtcp2_pkt_hd *dest, const uint8_t *pkt, size_t pktlen) {
   }
 
   if (p->version != NGTCP2_PROTO_VER_V1 &&
-      (p->version < NGTCP2_PROTO_VER_MIN ||
-       NGTCP2_PROTO_VER_MAX < p->version)) {
+      (p->version < NGTCP2_PROTO_VER_DRAFT_MIN ||
+       NGTCP2_PROTO_VER_DRAFT_MAX < p->version)) {
     return 1;
   }
 
