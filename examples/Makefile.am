@@ -28,17 +28,17 @@ AM_CPPFLAGS = \
 	-I$(top_builddir)/lib/includes \
 	-I$(top_srcdir)/crypto/includes \
 	-I$(top_srcdir)/third-party \
-	@OPENSSL_CFLAGS@ \
+	@BORINGSSL_CFLAGS@ \
 	@LIBEV_CFLAGS@ \
 	@LIBNGHTTP3_CFLAGS@ \
 	@DEFS@
 AM_LDFLAGS = -no-install \
 	@LIBTOOL_LDFLAGS@
-LDADD = $(top_builddir)/crypto/openssl/libngtcp2_crypto_openssl.la \
+LDADD = $(top_builddir)/crypto/boringssl/libngtcp2_crypto_boringssl.la \
 	$(top_builddir)/lib/libngtcp2.la \
 	$(top_builddir)/third-party/libhttp-parser.la \
 	@JEMALLOC_LIBS@ \
-	@OPENSSL_LIBS@ \
+	@BORINGSSL_LIBS@ \
 	@LIBEV_LIBS@ \
 	@LIBNGHTTP3_LIBS@
 

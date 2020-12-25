@@ -41,7 +41,7 @@
 #include <sys/mman.h>
 #include <netinet/udp.h>
 
-#include <ngtcp2/ngtcp2_crypto_openssl.h>
+#include <ngtcp2/ngtcp2_crypto_boringssl.h>
 
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -864,7 +864,7 @@ int Handler::init(const Endpoint &ep, const sockaddr *sa, socklen_t salen,
   ssl_ = SSL_new(ssl_ctx_);
   SSL_set_app_data(ssl_, this);
   SSL_set_accept_state(ssl_);
-  SSL_set_quic_early_data_enabled(ssl_, 1);
+  SSL_set_early_data_enabled(ssl_, 1);
 
   auto callbacks = ngtcp2_callbacks{
       nullptr, // client_initial
@@ -988,6 +988,31 @@ int Handler::init(const Endpoint &ep, const sockaddr *sa, socklen_t salen,
                                        &callbacks, &settings, nullptr, this);
       rv != 0) {
     std::cerr << "ngtcp2_conn_server_new: " << ngtcp2_strerror(rv) << std::endl;
+    return -1;
+  }
+
+  std::array<uint8_t, 128> quic_early_data_ctx;
+  ngtcp2_transport_params ctx_params;
+  memset(&ctx_params, 0, sizeof(ctx_params));
+  ctx_params.initial_max_streams_bidi = params.initial_max_streams_bidi;
+  ctx_params.initial_max_streams_uni = params.initial_max_streams_uni;
+  ctx_params.initial_max_stream_data_bidi_local =
+      params.initial_max_stream_data_bidi_local;
+  ctx_params.initial_max_stream_data_bidi_remote =
+      params.initial_max_stream_data_bidi_remote;
+  ctx_params.initial_max_stream_data_uni = params.initial_max_stream_data_uni;
+  ctx_params.initial_max_data = params.initial_max_data;
+
+  auto quic_early_data_ctxlen = ngtcp2_encode_transport_params(
+      quic_early_data_ctx.data(), quic_early_data_ctx.size(),
+      NGTCP2_TRANSPORT_PARAMS_TYPE_ENCRYPTED_EXTENSIONS, &ctx_params);
+
+  assert(quic_early_data_ctxlen > 0);
+  assert(quic_early_data_ctxlen <= quic_early_data_ctx.size());
+
+  if (SSL_set_quic_early_data_context(ssl_, quic_early_data_ctx.data(),
+                                      quic_early_data_ctxlen) != 1) {
+    std::cerr << "SSL_set_quic_early_data_context failed" << std::endl;
     return -1;
   }
 
@@ -1533,7 +1558,7 @@ Server::Server(struct ev_loop *loop, SSL_CTX *ssl_ctx)
   ev_signal_init(&sigintev_, siginthandler, SIGINT);
 
   ngtcp2_crypto_aead_init(&token_aead_,
-                          const_cast<EVP_CIPHER *>(EVP_aes_128_gcm()));
+                          const_cast<EVP_AEAD *>(EVP_aead_aes_128_gcm()));
   ngtcp2_crypto_md_init(&token_md_, const_cast<EVP_MD *>(EVP_sha256()));
 }
 
@@ -2658,19 +2683,14 @@ int alpn_select_proto_cb(SSL *ssl, const unsigned char **out,
 } // namespace
 
 namespace {
-int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
-                           const uint8_t *read_secret,
-                           const uint8_t *write_secret, size_t secret_len) {
+int set_read_secret(SSL *ssl, enum ssl_encryption_level_t ssl_level,
+                    const SSL_CIPHER *cipher, const uint8_t *secret,
+                    size_t secret_len) {
   auto h = static_cast<Handler *>(SSL_get_app_data(ssl));
-  auto level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
+  auto level = ngtcp2_crypto_boringssl_from_ssl_encryption_level(ssl_level);
 
-  if (auto rv = h->on_rx_key(level, read_secret, secret_len); rv != 0) {
+  if (auto rv = h->on_rx_key(level, secret, secret_len); rv != 0) {
     return 0;
-  }
-  if (write_secret) {
-    if (auto rv = h->on_tx_key(level, write_secret, secret_len); rv != 0) {
-      return 0;
-    }
   }
 
   return 1;
@@ -2678,10 +2698,25 @@ int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
 } // namespace
 
 namespace {
-int add_handshake_data(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
+int set_write_secret(SSL *ssl, enum ssl_encryption_level_t ssl_level,
+                     const SSL_CIPHER *cipher, const uint8_t *secret,
+                     size_t secret_len) {
+  auto h = static_cast<Handler *>(SSL_get_app_data(ssl));
+  auto level = ngtcp2_crypto_boringssl_from_ssl_encryption_level(ssl_level);
+
+  if (auto rv = h->on_tx_key(level, secret, secret_len); rv != 0) {
+    return 0;
+  }
+
+  return 1;
+}
+} // namespace
+
+namespace {
+int add_handshake_data(SSL *ssl, enum ssl_encryption_level_t ssl_level,
                        const uint8_t *data, size_t len) {
   auto h = static_cast<Handler *>(SSL_get_app_data(ssl));
-  auto level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
+  auto level = ngtcp2_crypto_boringssl_from_ssl_encryption_level(ssl_level);
   h->write_server_handshake(level, data, len);
   return 1;
 }
@@ -2701,10 +2736,8 @@ int send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t alert) {
 
 namespace {
 auto quic_method = SSL_QUIC_METHOD{
-    set_encryption_secrets,
-    add_handshake_data,
-    flush_flight,
-    send_alert,
+    set_read_secret, set_write_secret, add_handshake_data,
+    flush_flight,    send_alert,
 };
 } // namespace
 
@@ -2724,18 +2757,11 @@ SSL_CTX *create_ssl_ctx(const char *private_key_file, const char *cert_file) {
 
   constexpr auto ssl_opts = (SSL_OP_ALL & ~SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS) |
                             SSL_OP_SINGLE_ECDH_USE |
-                            SSL_OP_CIPHER_SERVER_PREFERENCE |
-                            SSL_OP_NO_ANTI_REPLAY;
+                            SSL_OP_CIPHER_SERVER_PREFERENCE;
 
   SSL_CTX_set_options(ssl_ctx, ssl_opts);
 
-  if (SSL_CTX_set_ciphersuites(ssl_ctx, config.ciphers) != 1) {
-    std::cerr << "SSL_CTX_set_ciphersuites: "
-              << ERR_error_string(ERR_get_error(), nullptr) << std::endl;
-    exit(EXIT_FAILURE);
-  }
-
-  if (SSL_CTX_set1_groups_list(ssl_ctx, config.groups) != 1) {
+  if (SSL_CTX_set1_curves_list(ssl_ctx, config.groups) != 1) {
     std::cerr << "SSL_CTX_set1_groups_list failed" << std::endl;
     exit(EXIT_FAILURE);
   }
@@ -2777,7 +2803,6 @@ SSL_CTX *create_ssl_ctx(const char *private_key_file, const char *cert_file) {
                        verify_cb);
   }
 
-  SSL_CTX_set_max_early_data(ssl_ctx, std::numeric_limits<uint32_t>::max());
   SSL_CTX_set_quic_method(ssl_ctx, &quic_method);
 
   return ssl_ctx;

@@ -39,7 +39,7 @@
 #include <netdb.h>
 #include <sys/mman.h>
 
-#include <ngtcp2/ngtcp2_crypto_openssl.h>
+#include <ngtcp2/ngtcp2_crypto_boringssl.h>
 
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -564,8 +564,7 @@ int handshake_completed(ngtcp2_conn *conn, void *user_data) {
 int Client::handshake_completed() {
   if (!config.quiet) {
     // SSL_get_early_data_status works after handshake completes.
-    if (early_data_ &&
-        SSL_get_early_data_status(ssl_) != SSL_EARLY_DATA_ACCEPTED) {
+    if (early_data_ && !SSL_early_data_accepted(ssl_)) {
       std::cerr << "Early data was rejected by server" << std::endl;
 
       if (auto rv = ngtcp2_conn_early_data_rejected(conn_); rv != 0) {
@@ -835,9 +834,9 @@ int Client::init_ssl() {
         if (!SSL_set_session(ssl_, session)) {
           std::cerr << "Could not set session" << std::endl;
         } else if (!config.disable_early_data &&
-                   SSL_SESSION_get_max_early_data(session)) {
+                   SSL_SESSION_early_data_capable(session)) {
           early_data_ = true;
-          SSL_set_quic_early_data_enabled(ssl_, 1);
+          SSL_set_early_data_enabled(ssl_, 1);
         }
         SSL_SESSION_free(session);
       }
@@ -1811,10 +1810,6 @@ void Client::set_tls_alert(uint8_t alert) { last_error_ = quic_err_tls(alert); }
 
 namespace {
 int new_session_cb(SSL *ssl, SSL_SESSION *session) {
-  if (SSL_SESSION_get_max_early_data(session) !=
-      std::numeric_limits<uint32_t>::max()) {
-    std::cerr << "max_early_data_size is not 0xffffffff" << std::endl;
-  }
   auto f = BIO_new_file(config.session_file, "w");
   if (f == nullptr) {
     std::cerr << "Could not write TLS session in " << config.session_file
@@ -1830,16 +1825,13 @@ int new_session_cb(SSL *ssl, SSL_SESSION *session) {
 } // namespace
 
 namespace {
-int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
-                           const uint8_t *read_secret,
-                           const uint8_t *write_secret, size_t secret_len) {
+int set_read_secret(SSL *ssl, enum ssl_encryption_level_t ssl_level,
+                    const SSL_CIPHER *cipher, const uint8_t *secret,
+                    size_t secret_len) {
   auto c = static_cast<Client *>(SSL_get_app_data(ssl));
-  auto level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
+  auto level = ngtcp2_crypto_boringssl_from_ssl_encryption_level(ssl_level);
 
-  if (read_secret && c->on_rx_key(level, read_secret, secret_len) != 0) {
-    return 0;
-  }
-  if (c->on_tx_key(level, write_secret, secret_len) != 0) {
+  if (c->on_rx_key(level, secret, secret_len) != 0) {
     return 0;
   }
 
@@ -1848,10 +1840,25 @@ int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
 } // namespace
 
 namespace {
-int add_handshake_data(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
+int set_write_secret(SSL *ssl, enum ssl_encryption_level_t ssl_level,
+                     const SSL_CIPHER *cipher, const uint8_t *secret,
+                     size_t secret_len) {
+  auto c = static_cast<Client *>(SSL_get_app_data(ssl));
+  auto level = ngtcp2_crypto_boringssl_from_ssl_encryption_level(ssl_level);
+
+  if (c->on_tx_key(level, secret, secret_len) != 0) {
+    return 0;
+  }
+
+  return 1;
+}
+} // namespace
+
+namespace {
+int add_handshake_data(SSL *ssl, enum ssl_encryption_level_t ssl_level,
                        const uint8_t *data, size_t len) {
   auto c = static_cast<Client *>(SSL_get_app_data(ssl));
-  auto level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
+  auto level = ngtcp2_crypto_boringssl_from_ssl_encryption_level(ssl_level);
   c->write_client_handshake(level, data, len);
   return 1;
 }
@@ -1871,10 +1878,8 @@ int send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t alert) {
 
 namespace {
 auto quic_method = SSL_QUIC_METHOD{
-    set_encryption_secrets,
-    add_handshake_data,
-    flush_flight,
-    send_alert,
+    set_read_secret, set_write_secret, add_handshake_data,
+    flush_flight,    send_alert,
 };
 } // namespace
 
@@ -1887,13 +1892,7 @@ SSL_CTX *create_ssl_ctx(const char *private_key_file, const char *cert_file) {
 
   SSL_CTX_set_default_verify_paths(ssl_ctx);
 
-  if (SSL_CTX_set_ciphersuites(ssl_ctx, config.ciphers) != 1) {
-    std::cerr << "SSL_CTX_set_ciphersuites: "
-              << ERR_error_string(ERR_get_error(), nullptr) << std::endl;
-    exit(EXIT_FAILURE);
-  }
-
-  if (SSL_CTX_set1_groups_list(ssl_ctx, config.groups) != 1) {
+  if (SSL_CTX_set1_curves_list(ssl_ctx, config.groups) != 1) {
     std::cerr << "SSL_CTX_set1_groups_list failed" << std::endl;
     exit(EXIT_FAILURE);
   }
