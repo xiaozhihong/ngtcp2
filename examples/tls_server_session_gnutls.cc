@@ -226,7 +226,8 @@ int TLSServerSession::init(const TLSServerContext &tls_ctx,
     return -1;
   }
 
-  std::string priority = config.ciphers;
+  std::string priority = "%DISABLE_TLS13_COMPAT_MODE:";
+  priority += config.ciphers;
   priority += ':';
   priority += config.groups;
 
