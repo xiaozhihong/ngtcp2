@@ -42,7 +42,6 @@ void ngtcp2_rs_init(ngtcp2_rs *rs) {
 
 void ngtcp2_rst_init(ngtcp2_rst *rst) {
   ngtcp2_rs_init(&rst->rs);
-  ngtcp2_window_filter_init(&rst->wf, 12);
   rst->delivered = 0;
   rst->delivered_ts = 0;
   rst->first_sent_ts = 0;
@@ -65,7 +64,6 @@ void ngtcp2_rst_on_pkt_sent(ngtcp2_rst *rst, ngtcp2_rtb_entry *ent,
 int ngtcp2_rst_on_ack_recv(ngtcp2_rst *rst, ngtcp2_conn_stat *cstat,
                            uint64_t pkt_delivered) {
   ngtcp2_rs *rs = &rst->rs;
-  uint64_t rate;
 
   if (rst->app_limited && rst->delivered > rst->app_limited) {
     rst->app_limited = 0;
@@ -93,12 +91,7 @@ int ngtcp2_rst_on_ack_recv(ngtcp2_rst *rst, ngtcp2_conn_stat *cstat,
     return 0;
   }
 
-  rate = rs->delivered * NGTCP2_SECONDS / rs->interval;
-
-  if (rate > ngtcp2_window_filter_get_best(&rst->wf) || !rst->app_limited) {
-    ngtcp2_window_filter_update(&rst->wf, rate, rst->round_count);
-    cstat->delivery_rate_sec = ngtcp2_window_filter_get_best(&rst->wf);
-  }
+  cstat->delivery_rate_sec = rs->delivered * NGTCP2_SECONDS / rs->interval;
 
   return 0;
 }

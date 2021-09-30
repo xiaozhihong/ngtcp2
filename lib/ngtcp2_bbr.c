@@ -37,7 +37,7 @@ static const double pacing_gain_cycle[] = {1.25, 0.75, 1, 1, 1, 1, 1, 1};
 #define NGTCP2_BBR_GAIN_CYCLELEN                                               \
   (sizeof(pacing_gain_cycle) / sizeof(pacing_gain_cycle[0]))
 
-#define NGTCP2_BBR_HIGH_GAIN 2.89
+#define NGTCP2_BBR_HIGH_GAIN 2.885
 #define NGTCP2_BBR_PROBE_RTT_DURATION (200 * NGTCP2_MILLISECONDS)
 #define NGTCP2_RTPROP_FILTERLEN (10 * NGTCP2_SECONDS)
 #define NGTCP2_BBR_BTL_BW_FILTERLEN 10
@@ -324,10 +324,8 @@ static void bbr_update_btl_bw(ngtcp2_bbr_cc *cc, ngtcp2_conn_stat *cstat,
     return;
   }
 
-  ngtcp2_window_filter_update(&cc->btl_bw_filter, cstat->delivery_rate_sec,
-                              cc->round_count);
-
-  cc->btl_bw = ngtcp2_window_filter_get_best(&cc->btl_bw_filter);
+  cc->btl_bw = ngtcp2_window_filter_running_max(&cc->btl_bw_filter, NGTCP2_BBR_BTL_BW_FILTERLEN, 
+                                                cc->round_count, cstat->delivery_rate_sec);
 }
 
 static void bbr_update_rtprop(ngtcp2_bbr_cc *cc, ngtcp2_conn_stat *cstat,
@@ -382,8 +380,7 @@ static void bbr_set_send_quantum(ngtcp2_bbr_cc *cc, ngtcp2_conn_stat *cstat) {
     cstat->send_quantum = (size_t)ngtcp2_min(send_quantum, 64 * 1024);
   }
 
-  cstat->send_quantum =
-      ngtcp2_max(cstat->send_quantum, cstat->max_udp_payload_size * 10);
+  // cstat->send_quantum = ngtcp2_max(cstat->send_quantum, cstat->max_udp_payload_size * 10);
 }
 
 static uint64_t bbr_inflight(ngtcp2_bbr_cc *cc, ngtcp2_conn_stat *cstat,
@@ -490,7 +487,7 @@ static void bbr_init(ngtcp2_bbr_cc *cc, ngtcp2_conn_stat *cstat,
 
   cstat->send_quantum = cstat->max_udp_payload_size * 10;
 
-  ngtcp2_window_filter_init(&cc->btl_bw_filter, NGTCP2_BBR_BTL_BW_FILTERLEN);
+  ngtcp2_window_filter_init(&cc->btl_bw_filter, 0, 0);
 
   bbr_init_round_counting(cc);
   bbr_init_full_pipe(cc);

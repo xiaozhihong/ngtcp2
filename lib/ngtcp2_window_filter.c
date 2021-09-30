@@ -36,64 +36,73 @@
 
 #include <string.h>
 
-void ngtcp2_window_filter_init(ngtcp2_window_filter *wf,
-                               uint64_t window_length) {
-  wf->window_length = window_length;
-  memset(wf->estimates, 0, sizeof(wf->estimates));
+void ngtcp2_window_filter_init(ngtcp2_window_filter *m, uint64_t t, uint64_t meas) {
+    ngtcp2_window_filter_sample val = { .t = t, .v = meas };
+    m->s[2] = m->s[1] = m->s[0] = val;
 }
 
-void ngtcp2_window_filter_update(ngtcp2_window_filter *wf, uint64_t new_sample,
-                                 uint64_t new_time) {
-  if (wf->estimates[0].sample == 0 || new_sample > wf->estimates[0].sample ||
-      new_time - wf->estimates[2].time > wf->window_length) {
-    ngtcp2_window_filter_reset(wf, new_sample, new_time);
-    return;
-  }
+uint64_t ngtcp2_window_filter_reset(ngtcp2_window_filter *m, uint64_t t, uint64_t meas)
+{
+    ngtcp2_window_filter_sample val = { .t = t, .v = meas };
 
-  if (new_sample > wf->estimates[1].sample) {
-    wf->estimates[1].sample = new_sample;
-    wf->estimates[1].time = new_time;
-    wf->estimates[2] = wf->estimates[1];
-  } else if (new_sample > wf->estimates[2].sample) {
-    wf->estimates[2].sample = new_sample;
-    wf->estimates[2].time = new_time;
-  }
+	m->s[2] = m->s[1] = m->s[0] = val;
+	return m->s[0].v;
+}
 
-  if (new_time - wf->estimates[0].time > wf->window_length) {
-    wf->estimates[0] = wf->estimates[1];
-    wf->estimates[1] = wf->estimates[2];
-    wf->estimates[2].sample = new_sample;
-    wf->estimates[2].time = new_time;
 
-    if (new_time - wf->estimates[0].time > wf->window_length) {
-      wf->estimates[0] = wf->estimates[1];
-      wf->estimates[1] = wf->estimates[2];
+/* As time advances, update the 1st, 2nd, and 3rd choices. */
+uint64_t ngtcp2_window_filter_update(ngtcp2_window_filter *m, uint64_t win, const ngtcp2_window_filter_sample* val) {
+    uint64_t dt = val->t - m->s[0].t;
+
+    if ((dt > win)) {
+        /*
+         * Passed entire window without a new val so make 2nd
+         * choice the new val & 3rd choice the new 2nd choice.
+         * we may have to iterate this since our 2nd choice
+         * may also be outside the window (we checked on entry
+         * that the third choice was in the window).
+         */
+        m->s[0] = m->s[1];
+        m->s[1] = m->s[2];
+        m->s[2] = *val;
+        if ((val->t - m->s[0].t > win)) {
+            m->s[0] = m->s[1];
+            m->s[1] = m->s[2];
+            m->s[2] = *val;
+        }
+    } else if ((m->s[1].t == m->s[0].t) && dt > win/4) {
+        /*
+         * We've passed a quarter of the window without a new val
+         * so take a 2nd choice from the 2nd quarter of the window.
+         */
+        m->s[2] = m->s[1] = *val;
+    } else if ((m->s[2].t == m->s[1].t) && dt > win/2) {
+        /*
+         * We've passed half the window without finding a new val
+         * so take a 3rd choice from the last half of the window
+         */
+        m->s[2] = *val;
     }
-    return;
-  }
-
-  if (wf->estimates[1].sample == wf->estimates[0].sample &&
-      new_time - wf->estimates[1].time > wf->window_length >> 2) {
-    wf->estimates[2].sample = new_sample;
-    wf->estimates[2].time = new_time;
-    wf->estimates[1] = wf->estimates[2];
-    return;
-  }
-
-  if (wf->estimates[2].sample == wf->estimates[1].sample &&
-      new_time - wf->estimates[2].time > wf->window_length >> 1) {
-    wf->estimates[2].sample = new_sample;
-    wf->estimates[2].time = new_time;
-  }
+    return m->s[0].v;
 }
 
-void ngtcp2_window_filter_reset(ngtcp2_window_filter *wf, uint64_t new_sample,
-                                uint64_t new_time) {
-  wf->estimates[0].sample = new_sample;
-  wf->estimates[0].time = new_time;
-  wf->estimates[1] = wf->estimates[2] = wf->estimates[0];
+/* Check if new measurement updates the 1st, 2nd or 3rd choice max. */
+uint64_t ngtcp2_window_filter_running_max(struct ngtcp2_window_filter *m, uint64_t win, uint64_t t, uint64_t meas)
+{
+    ngtcp2_window_filter_sample val = { .t = t, .v = meas };
+
+    if ((val.v >= m->s[0].v) ||      /* found new max? */
+        (val.t - m->s[2].t > win))      /* nothing left in window? */
+        return ngtcp2_window_filter_reset(m, t, meas);  /* forget earlier samples */
+
+    if ((val.v >= m->s[1].v))
+        m->s[2] = m->s[1] = val;
+    else if ((val.v >= m->s[2].v))
+        m->s[2] = val;
+
+    return ngtcp2_window_filter_update(m, win, &val);
 }
 
-uint64_t ngtcp2_window_filter_get_best(ngtcp2_window_filter *wf) {
-  return wf->estimates[0].sample;
+uint64_t ngtcp2_window_filter_get_max(struct ngtcp2_window_filter* m) {
+    return m->s[0].v;
 }

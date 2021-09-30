@@ -42,24 +42,19 @@
 #include <ngtcp2/ngtcp2.h>
 
 typedef struct ngtcp2_window_filter_sample {
-  uint64_t sample;
-  uint64_t time;
+  uint64_t v;
+  uint64_t t;
 } ngtcp2_window_filter_sample;
 
 typedef struct ngtcp2_window_filter {
   uint64_t window_length;
-  ngtcp2_window_filter_sample estimates[3];
+  ngtcp2_window_filter_sample s[3];
 } ngtcp2_window_filter;
 
-void ngtcp2_window_filter_init(ngtcp2_window_filter *wf,
-                               uint64_t window_length);
 
-void ngtcp2_window_filter_update(ngtcp2_window_filter *wf, uint64_t new_sample,
-                                 uint64_t new_time);
-
-void ngtcp2_window_filter_reset(ngtcp2_window_filter *wf, uint64_t new_sample,
-                                uint64_t new_time);
-
-uint64_t ngtcp2_window_filter_get_best(ngtcp2_window_filter *wf);
+void ngtcp2_window_filter_init(ngtcp2_window_filter *m, uint64_t t, uint64_t meas);
+uint64_t ngtcp2_window_filter_update(ngtcp2_window_filter *m, uint64_t win, const ngtcp2_window_filter_sample* val);
+uint64_t ngtcp2_window_filter_running_max(struct ngtcp2_window_filter *m, uint64_t win, uint64_t t, uint64_t meas);
+uint64_t ngtcp2_window_filter_get_max(struct ngtcp2_window_filter* m);
 
 #endif /* NGTCP2_WINDOW_FILTER_H */
